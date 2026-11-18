@@ -27,7 +27,9 @@ This runs three steps in order:
 2. `make analyze` fits both estimators, writing `results/raw/estimates.pk` and `results/summary.csv`.
 3. `make figures` writes the boxplots `results/figures/plugin_boxplot.png` and `results/figures/beta2_boxplot.png`.
 
-Other targets: `make test` runs the pytest suite, and `make clean` removes generated outputs.
+Other targets: `make test` runs the pytest suite, `make profile` runs the profiling, complexity and numerical-stability scripts in `profiling/` (writes to `results/profiling/`, needs `pip install line_profiler`, takes about 1–2 minutes), and `make clean` removes generated outputs.
+
+See [docs/BASELINE.md](docs/BASELINE.md) for baseline runtime, profiler results, computational complexity and numerical-stability findings.
 
 ## Estimated runtime
 

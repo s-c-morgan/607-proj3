@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: all simulate analyze figures clean test
+.PHONY: all simulate analyze figures clean test profile
 
 all: simulate analyze figures
 
@@ -13,6 +13,12 @@ analyze:
 figures:
 	$(PYTHON) results/figures/plot_plugin.py
 	$(PYTHON) results/figures/plot_beta2.py
+
+profile:
+	cd profiling && $(PYTHON) profile_runtime.py
+	cd profiling && $(PYTHON) complexity.py
+	cd profiling && $(PYTHON) profile_stages.py
+	cd profiling && $(PYTHON) stability.py
 
 test:
 	$(PYTHON) -m pytest tests
