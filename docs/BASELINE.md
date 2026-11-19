@@ -1,24 +1,13 @@
 # Baseline Performance: Unit 2 Simulation Study
 
-This document records how the simulation study ran **as submitted for Unit 2**, before any optimization. `src/` is unchanged. All measurements come from the scripts in `profiling/` (`make profile`), and their raw output is in `results/profiling/`.
-
-**Machine and software.** Apple M1 (8 cores, 16 GB RAM), macOS (Darwin 27.2), Python 3.9.6, NumPy 2.0.2, matplotlib 3.9.4, line_profiler 5.0.2. Everything runs single-threaded. Timings are wall-clock medians unless stated otherwise.
-
 **Study settings.** n ∈ {100, 500, 1000, 5000} with S = 1000 randomized experiments per n, giving 4000 logistic regressions fit by Newton–Raphson plus 4000 plug-in estimates. Seed 607.
 
 ---
 
 ## 1. Total runtime
 
-| Run | `make clean && make all` wall time |
-|---|---|
-| 1 | 3.88 s |
-| 2 | 3.53 s |
-| 3 | 3.57 s |
 
-**The full study takes about 3.6 s end to end.** The README's figure of about 5 s is a conservative upper bound.
-
-Breakdown by `make` stage (fresh interpreter for each, median of 3, from `results/profiling/stage_timings.csv`):
+The full study takes about 3.6 s end to end. Breakdown by `make` stage (from `results/profiling/stage_timings.csv`):
 
 | Stage | Script | Wall time | Share |
 |---|---|---|---|
@@ -51,7 +40,7 @@ The run took 1.60 s under cProfile (`results/profiling/cprofile_simulation.txt`,
 
 ### 2.2 line_profiler on the hot path
 
-From `results/profiling/line_profile.txt`, `methods.logit_mle` (1.30 s total under the line profiler):
+From `results/profiling/line_profile.txt`, `methods.logit_mle` (1.30 s)
 
 | Line | Code | % of `logit_mle` |
 |---|---|---|
@@ -62,8 +51,6 @@ From `results/profiling/line_profile.txt`, `methods.logit_mle` (1.30 s total und
 | 23 | `if np.max(np.abs(step)) < tol` | 7.4% |
 | 15 | `M = np.column_stack([...])` | 2.9% |
 
-In `dgps.randomize`, 80% of the time is `rng.choice(n, size=nT, replace=False)`. In `plug_in`, the time splits evenly between its two `_expit(...).mean()` calls.
-
 **Main bottlenecks, in order:**
 
 1. **The Newton–Raphson loop in `logit_mle`, at about 76–80% of compute.** The time is spread fairly evenly over its four array operations. No single line dominates, which suggests the cost is mostly per-call overhead repeated about 24k times.
@@ -72,7 +59,7 @@ In `dgps.randomize`, 80% of the time is `rng.choice(n, size=nT, replace=False)`.
 
 ## 3. Computational complexity
 
-### 3.1 Theoretical analysis
+### 3.1 Theoretical analysis (per Claude)
 
 Notation: n is the sample size, p = 3 is the number of logit parameters, S = 1000 is the number of replications per n, and K is the number of Newton iterations.
 
@@ -81,17 +68,11 @@ Notation: n is the sample size, p = 3 is the number of logit parameters, S = 100
 | `make_population` (once per n) | O(n) | negligible |
 | `randomize` | O(n) | `choice` without replacement, then elementwise Y |
 | `logit_mle`, per iteration | O(np) for `M@β`, expit and gradient; O(np²) for the Hessian; O(p³) for the solve | |
-| `logit_mle`, total | **O(K·n·p²)** | p = 3 is fixed and K ≈ 6 does not depend on n (see 3.2), so this is **O(n)** |
+| `logit_mle`, total | **O(K·n·p²)** | p = 3 is fixed and K ≈ 6 , so this is **O(n)** |
 | `plug_in` | O(n) | two expit evaluations and two means |
 | `true_delta` (once per n) | O(n) | |
 
 So **one replication costs Θ(n)**, and the whole study costs Θ(S · Σ n) = Θ(1000 × 6600). Newton–Raphson converges quadratically once it is near the optimum, and the log-likelihood here is well conditioned (Hessian condition number < 90; see Section 4). That is why K does not grow with n: the measured K is 6.0 for every n ≥ 500 and 6.35 at n = 100.
-
-Asymptotics alone miss an important fact: each replication makes several dozen small NumPy calls, and each call has a fixed overhead of a few microseconds that does not depend on n. A better model is
-
-  **t(n) ≈ a + b·n,  with a ≈ 0.105 ms and b ≈ 0.114 µs per observation.**
-
-This was fit to the measured data for 50 ≤ n ≤ 200,000 and has a maximum relative error of 7%. The overhead term and the linear term are equal at **n ≈ 900**.
 
 ### 3.2 Empirical analysis
 
@@ -117,7 +98,7 @@ Slopes fitted on a log–log scale (`results/profiling/complexity_fit.txt`):
 | `randomize` | 0.28 | 0.83 | 0.65 |
 | **total** | **0.26** | **0.99** | 0.72 |
 
-The empirical results match the theory: the cost is **linear in n (slope ≈ 1.0)** once n is above a few thousand. In the range the study actually uses (n ≤ 1000), the slope is only about 0.26, because fixed per-call overhead dominates. The study's n are marked by dotted lines on the plot, and three of the four fall in this overhead-dominated region. At 500k the curve bends slightly upward, likely because of cache effects (the arrays no longer fit in cache). `randomize` has a kink near n = 20k, where NumPy's `choice(replace=False)` switches between sampling algorithms.
+The empirical results match the theory.
 
 **Where the study's compute goes**, predicted as 1000 × t(n) from the table above:
 
@@ -129,11 +110,9 @@ The empirical results match the theory: the cost is **linear in n (slope ≈ 1.0
 | 5,000 | 0.69 s | 58% |
 | **Total** | **1.20 s** | |
 
-This agrees with the 1.38 s measured by cProfile for `estimate`, which includes profiler overhead. Under the a + b·n model, about **35% of all compute (4000 × a ≈ 0.42 s) is pure per-replication overhead.** For this workload, the most promising optimization is therefore to vectorize across the S replications (fit all 1000 regressions for a given n in one batched Newton loop), which cuts overhead from O(S) calls to O(1), rather than to speed up the O(n) arithmetic.
+This agrees with the 1.38 s measured by cProfile for `estimate`, which includes profiler overhead.
 
 ### 3.3 Per-stage scaling measured by the profiler
-
-`profiling/profile_stages.py` runs the whole Unit 2 pipeline under cProfile for one sample size at a time: `simulate_data`, then the pickle save and reload, then `estimate`, then `analyze.summarize`. It does this for n from 50 to 100,000, with S = 200 replications at every n. Each stage's cumulative time is read from the profile and divided by S. Data is in `results/profiling/stage_scaling.csv` and the fitted slopes are in `stage_scaling_fit.txt`.
 
 ![Per-stage time complexity measured by cProfile](../results/profiling/stage_scaling.png)
 
@@ -150,19 +129,12 @@ cProfile cumulative time per replication, in ms:
 
 The per-stage results agree with the analysis in 3.1:
 
-- **`logit_mle` dominates at every n,** taking 75–80% of each replication. It is overhead-bound below n ≈ 1000 (slope about 0.2) and close to linear above that.
-- **`plug_in` and `randomize` are O(n)** with small constants. `randomize` has a slope of only 0.66 because of the NumPy `choice` algorithm switch near n = 20k (also visible in 3.2).
-- **Pickle save/load is the only stage that grows faster than linearly** (slope about 1.25). It copies S × n int64 arrays, and once those buffers get large, memory allocation and copying cost more per byte. It is negligible at the study's n, about 2.5% of the total at n = 5000, but rises to 6% at n = 100,000. In the real `simulation.py`, which writes a 106 MB file to disk, it took 0.06 s (Section 2.1).
-- **`summarize` does not depend on n.** It works on the S × 7 estimates array, so its cost is O(S × number of sample sizes).
+- **`logit_mle` dominates at every n,** taking 75–80% of each replication.
+- **`plug_in` and `randomize` are O(n)** with small constants.
+- **`summarize` does not depend on n.** 
 
-The profiler's own per-call overhead inflates the small-n times. At n = 100 the total is 0.166 ms under cProfile versus 0.108 ms measured directly in 3.2. This also pulls the n ≥ 5000 slope down to about 0.92, from 0.99 without the profiler. Use 3.2 for absolute times and this figure for how the stages compare and how each one scales.
 
-### 3.4 Scaling in the other parameters
-
-- **S (replications):** exactly linear. The replications are independent and run in a plain Python loop.
-- **Memory:** `simulate_data` stores X and Y for every replication as int64 arrays of shape S × n. That totals 2 × 1000 × 6600 × 8 B ≈ **106 MB** (traced peak 108.5 MB, and `data/simulated.pk` is 106 MB on disk). Memory is Θ(S·Σn). The values are only 0 or 1, so `int8` or `bool` would need about 13 MB. Generating each replication inside the estimation loop instead of storing them all would need O(n) memory.
-
-## 4. Numerical warnings and convergence
+## 4. Numerical warnings and convergence (per Claude)
 
 `profiling/stability.py` re-runs the study exactly (seed 607) and logs the following for each replication:
 
@@ -181,9 +153,8 @@ It also replays the Newton loop to record iterations, convergence, gradient size
 | 1,000 | 0 | 0 | 0 / 1000 | 6.00 / 6 | 5.8e-14 | 42 | [0.104, 0.963] | 4.1 |
 | 5,000 | 0 | 0 | 0 / 1000 | 6.00 / 6 | 3.1e-13 | 37 | [0.132, 0.953] | 3.7 |
 
-**No warnings, exceptions, non-finite estimates or convergence failures occurred in any of the 4000 replications, and no floating-point events were raised, not even underflow.** Every fit met the step tolerance of 1e-10 in at most 7 iterations, with a gradient at machine-precision level. The plug-in α̂_T and α̂_C always stayed well inside (0, 1), with all values in [0.17, 0.75], so the log-odds in `plug_in` and `true_delta` were never near 0 or ±∞. No experiment had a treatment arm with a constant outcome, so there was no separation. The smallest arm is 25 controls at n = 100.
 
-n = 100 is the only setting with any sign of strain: it has the widest range of fitted probabilities and the largest coefficients (|β̂| up to 7.5), and it occasionally needs a 7th iteration. That is expected, since it is the smallest sample.
+n = 100 is the only setting with any sign of strain, with the widest range of fitted probabilities and the largest coefficients (|β̂| up to 7.5).
 
 ### 4.2 Stress test: where the same code breaks
 
@@ -199,21 +170,11 @@ To find the conditions under which the code becomes unstable, the same functions
 | 50 | 0.1% | 0.1% | 0 | 0 | 0 | 0 | **0.1%** |
 | ≥ 100 (study) | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
 
-The cause is **(quasi-)complete separation.** When the control arm (only 25% of subjects) happens to have all Y = 0 or all Y = 1, the logit MLE does not exist (β̂ → ±∞). Newton then pushes fitted probabilities to exactly 0 or 1, the weights p(1 − p) underflow to zero, and the Hessian becomes singular. The simple constant-arm check explains 100% of failures at n ≥ 30 and 83% at n = 8. The remainder are separation through Z, or through X and Z jointly, which this check does not detect.
-
-The symptoms and how they would surface under NumPy's default error settings:
-
-- **`np.linalg.LinAlgError: Singular matrix`** from `solve`. This is the most common symptom. It is uncaught, so it would crash `simulation.py` mid-study.
-- **`RuntimeWarning: overflow encountered in exp`** in `_expit`, once |Mβ| > 709. The naive `1/(1+exp(-t))` loses all precision there.
-- **Silent non-convergence.** `logit_mle` stops after `max_iter = 100` and returns β̂ with no flag or warning. Values as large as |β̂| ≈ 1e141 were returned this way.
-- **`RuntimeWarning: divide by zero encountered in log`** in `plug_in`, when α̂_C rounds to exactly 0 or 1. This gives δ̃ = ±∞.
-- **Hessian condition numbers up to about 1e18**, compared with less than 90 in the study.
-
-**Bottom line for the baseline.** At the submitted settings (n ≥ 100, 75/25 split) the numerics are clean, and none of these failure modes occurred. The code has no safeguards, however. It has no step-halving or line search, no convergence flag, no numerically stable `expit` (for example `scipy.special.expit`), and no handling of `LinAlgError`. Any change that shrinks the smaller arm, such as smaller n or a more lopsided split, would hit these problems. The docstring's statement that Newton–Raphson "converges to the unique maximum" holds only when the MLE exists. Any optimized version should add a convergence flag and record the failures, so that a regression can be detected against this baseline.
+When the control arm (only 25% of subjects) happens to have all Y = 0 or all Y = 1, the logit MLE does not exist (β̂ → ±∞). Newton then pushes fitted probabilities to exactly 0 or 1, the weights p(1 − p) underflow to zero, and the Hessian becomes singular.
 
 ---
 
-## Reproducing
+## Etcetera (reproducing, file bloat/descriptions)
 
 ```bash
 pip install -r requirements.txt line_profiler
