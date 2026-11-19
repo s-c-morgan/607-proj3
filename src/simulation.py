@@ -9,7 +9,9 @@ Saved to data/simulated.pk as {n: dict} with keys
 Step 2 (estimate): the logit MLE and plug-in estimator are computed for every
 experiment. Saved to results/raw/estimates.pk as a numpy array with columns
     n, simulation number, beta hat 1, beta hat 2, beta hat 3, plug-in estimate,
-    true delta
+    true delta, fit status, Newton iterations
+Fit status is a methods.STATUS code (0 = converged). Failed fits have NaN
+betas and plug-in estimate and are excluded by analyze.py.
 """
 import pickle
 from pathlib import Path
@@ -45,9 +47,10 @@ def estimate(data):
     rows = []
     for n, d in data.items():
         for s in range(d["X"].shape[0]):
-            beta = logit_mle(d["X"][s], d["Y"][s], d["Z"])
+            beta, info = logit_mle(d["X"][s], d["Y"][s], d["Z"], full_output=True)
             delta_tilde, _, _ = plug_in(beta, d["Z"])
-            rows.append([n, s + 1, *beta, delta_tilde, d["delta"]])
+            rows.append([n, s + 1, *beta, delta_tilde, d["delta"],
+                         info["status"], info["n_iter"]])
     return np.array(rows)
 
 

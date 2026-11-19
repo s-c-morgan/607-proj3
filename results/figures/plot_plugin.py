@@ -15,6 +15,8 @@ with open(ESTIMATES_PATH, "rb") as f:
 with open(DATA_PATH, "rb") as f:
     data = pickle.load(f)
 
+estimates = estimates[estimates[:, 7] == 0]  # converged fits only (column 7 = fit status)
+
 sample_sizes = sorted(data)
 plug_in = [estimates[estimates[:, 0] == n, 5] for n in sample_sizes]
 

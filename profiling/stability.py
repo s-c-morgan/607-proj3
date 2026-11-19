@@ -2,10 +2,11 @@
 
 Part A re-runs the exact study (seed 607, n = 100/500/1000/5000, 1000 sims)
 with every numpy floating-point event counted (np.errstate(all="call")),
-Python warnings recorded, and exceptions caught. For each replication we also
-replay the Newton-Raphson loop (identical arithmetic to methods.logit_mle) to
-log iterations, convergence, final gradient norm, Hessian condition number and
-fitted-probability range, and check it reproduces logit_mle exactly.
+Python warnings recorded, and exceptions caught. Each fit's status code from
+logit_mle(full_output=True) is recorded. For converged fits we also replay the
+Newton-Raphson loop (identical arithmetic to methods.logit_mle) to log the
+final gradient norm, Hessian condition number and fitted-probability range,
+and check the replay reproduces logit_mle exactly.
 
 Part B stresses the same code outside the study's settings (smaller n) to find
 the conditions under which it does break down.
@@ -21,7 +22,8 @@ import numpy as np
 from _common import OUT
 
 from dgps import make_population, randomize
-from methods import logit_mle, plug_in
+from methods import (CONVERGED, STATUS, _expit, _expit_and_weight, logit_mle,
+                     plug_in)
 from simulation import simulate_data
 
 TOL, MAX_ITER = 1e-10, 100
@@ -36,22 +38,22 @@ np.seterrcall(_fp_handler)
 
 
 def newton_trace(X, Y, Z):
-    """Replays methods.logit_mle and returns (beta, diagnostics)."""
+    """Replays methods.logit_mle on a fit known to converge (same arithmetic)."""
     M = np.column_stack([np.ones(len(Y)), X, Z])
     beta = np.zeros(3)
     conds = []
     converged = False
     for k in range(1, MAX_ITER + 1):
-        p = 1.0 / (1.0 + np.exp(-(M @ beta)))
+        p, w = _expit_and_weight(M @ beta)
         grad = M.T @ (Y - p)
-        hess = (M * (p * (1 - p))[:, None]).T @ M
+        hess = (M * w[:, None]).T @ M
         conds.append(np.linalg.cond(hess))
         step = np.linalg.solve(hess, grad)
         beta = beta + step
         if np.max(np.abs(step)) < TOL:
             converged = True
             break
-    p = 1.0 / (1.0 + np.exp(-(M @ beta)))
+    p = _expit(M @ beta)
     return beta, dict(iters=k, converged=converged,
                       final_step=float(np.max(np.abs(step))),
                       grad_norm=float(np.max(np.abs(M.T @ (Y - p)))),
@@ -67,18 +69,22 @@ def one_rep(X, Y, Z):
     with warnings.catch_warnings(record=True) as w, np.errstate(all="call"):
         warnings.simplefilter("always")
         try:
-            beta = logit_mle(X, Y, Z)
+            beta, info = logit_mle(X, Y, Z, full_output=True)
             delta, aT, aC = plug_in(beta, Z)
-            out.update(beta=beta, delta=delta, aT=aT, aC=aC)
+            out.update(beta=beta, delta=delta, aT=aT, aC=aC,
+                       status=STATUS[info["status"]], iters=info["n_iter"],
+                       converged=info["status"] == CONVERGED)
         except Exception as e:  # noqa: BLE001
             out["exception"] = type(e).__name__
         out["warnings"] = ";".join(sorted({str(x.category.__name__) for x in w}))
     if not out["exception"]:
-        with np.errstate(all="ignore"):
-            b2, diag = newton_trace(X, Y, Z)
-        out.update(diag)
-        out["replay_matches"] = bool(np.array_equal(b2, out["beta"]))
         out["finite"] = bool(np.all(np.isfinite(out["beta"])) and np.isfinite(out["delta"]))
+        if out["converged"]:
+            with np.errstate(all="ignore"):
+                b2, diag = newton_trace(X, Y, Z)
+            diag.pop("iters"), diag.pop("converged")
+            out.update(diag)
+            out["replay_matches"] = bool(np.array_equal(b2, out["beta"]))
     return out
 
 
@@ -96,12 +102,20 @@ def summarize(rows, label):
     lines.append(f"an arm with constant Y (separation by X): {len(sep)}; "
                  f"failures (exception / no convergence / non-finite): {len(bad)}, "
                  f"of which in separated data: {sum(r['arm_constant'] for r in bad)}")
+    st = Counter(r["status"] for r in rows if not r["exception"])
+    lines.append("fit status: " + ", ".join(f"{k} {v}" for k, v in sorted(st.items())))
+    failed = [r for r in rows if not r["exception"] and not r["converged"]]
+    conv = [r for r in rows if not r["exception"] and r["converged"]]
+    lines.append(f"silent failures (failed fit with non-NaN beta): "
+                 f"{sum(not np.all(np.isnan(r['beta'])) for r in failed)}; "
+                 f"converged fits with non-finite estimate: "
+                 f"{sum(not r['finite'] for r in conv)}")
+    ok = conv
     if ok:
         it = np.array([r["iters"] for r in ok])
-        lines.append(f"Newton iterations: min {it.min()}, mean {it.mean():.2f}, max {it.max()}; "
-                     f"not converged in {MAX_ITER}: {sum(not r['converged'] for r in ok)}")
-        lines.append(f"non-finite estimates: {sum(not r['finite'] for r in ok)}; "
-                     f"replay != logit_mle: {sum(not r['replay_matches'] for r in ok)}")
+        lines.append(f"Newton iterations (converged fits): min {it.min()}, "
+                     f"mean {it.mean():.2f}, max {it.max()}")
+        lines.append(f"replay != logit_mle: {sum(not r['replay_matches'] for r in ok)}")
         g = np.array([r["grad_norm"] for r in ok if r["converged"]])
         if g.size:
             lines.append(f"max |gradient| at solution (converged): {g.max():.2e}")
@@ -120,7 +134,8 @@ def summarize(rows, label):
 
 
 def write_csv(path, rows, extra):
-    keys = list(extra) + ["arm_constant", "exception", "warnings", "iters", "converged", "final_step",
+    keys = list(extra) + ["arm_constant", "exception", "warnings", "status", "iters",
+                          "converged", "final_step",
                           "grad_norm", "cond_max", "p_min", "p_max", "beta_absmax"]
     with open(path, "w") as f:
         f.write(",".join(keys) + "\n")
