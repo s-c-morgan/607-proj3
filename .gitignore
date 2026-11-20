@@ -14,3 +14,7 @@ results/profiling/*.prof
 # figures embedded in docs/BASELINE.md
 !results/profiling/complexity.png
 !results/profiling/stage_scaling.png
+# figures embedded in docs/OPTIMIZATION.md
+!results/profiling/optimization_flame.png
+!results/profiling/optimization_scaling.png
+!results/profiling/optimization_stages.png

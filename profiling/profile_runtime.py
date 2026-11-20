@@ -9,17 +9,17 @@
 
 Writes text reports to results/profiling/.
 """
+import contextlib
 import cProfile
 import io
 import pstats
 import runpy
-import subprocess
 import sys
 import time
 
 from line_profiler import LineProfiler
 
-from _common import OUT, ROOT, SRC
+from _common import OUT, ROOT, SRC, done, run_checked
 
 import dgps
 import methods
@@ -30,7 +30,8 @@ def run_cprofile():
     prof = cProfile.Profile()
     t0 = time.perf_counter()
     prof.enable()
-    runpy.run_path(str(SRC / "simulation.py"), run_name="__main__")
+    with contextlib.redirect_stdout(io.StringIO()):
+        runpy.run_path(str(SRC / "simulation.py"), run_name="__main__")
     prof.disable()
     wall = time.perf_counter() - t0
 
@@ -41,7 +42,6 @@ def run_cprofile():
         pstats.Stats(prof, stream=buf).strip_dirs().sort_stats(key).print_stats(20)
     (OUT / "cprofile_simulation.txt").write_text(buf.getvalue())
     prof.dump_stats(str(OUT / "cprofile_simulation.prof"))
-    print(buf.getvalue()[:6000])
 
 
 def run_line_profiler():
@@ -54,7 +54,6 @@ def run_line_profiler():
     buf = io.StringIO()
     lp.print_stats(stream=buf, output_unit=1e-3)
     (OUT / "line_profile.txt").write_text(buf.getvalue())
-    print(buf.getvalue())
 
 
 def stage_timings():
@@ -74,15 +73,15 @@ def stage_timings():
         ts = []
         for _ in range(3):
             t0 = time.perf_counter()
-            subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
+            run_checked(cmd, cwd)
             ts.append(time.perf_counter() - t0)
         ts.sort()
         lines.append(f"{name},{ts[1]:.3f},{'|'.join(f'{t:.3f}' for t in ts)}")
     (OUT / "stage_timings.csv").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines))
 
 
 if __name__ == "__main__":
     run_cprofile()
     run_line_profiler()
     stage_timings()
+    done(__file__)

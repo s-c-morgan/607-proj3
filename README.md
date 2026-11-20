@@ -1,4 +1,4 @@
-# Bias of Logistic Regression for Estimating Log-Odds Differences
+# Bias of Logistic Regression for Estimating Log-Odds Differences 
 
 A Monte Carlo replication of the core empirical result in Freedman's paper on logistic regression in randomized experiments. We simulate randomized trials with a binary outcome (potential outcomes fixed, only treatment assignment random) at sample sizes n = 100, 500, 1000, 5000 with 1000 simulations each. We compare two estimators of the true difference in log-odds between "everyone treated" and "no one treated":
 
@@ -10,7 +10,7 @@ A Monte Carlo replication of the core empirical result in Freedman's paper on lo
 Requires Python 3 and `make`.
 
 ```bash
-pip install -r requirements.txt   # numpy, matplotlib, pytest
+pip install -r requirements.txt   # numpy, matplotlib>=3.9, pytest, line_profiler
 ```
 
 On Windows, run `make` from Git Bash or WSL (or install GNU Make). Set `PYTHON=python3` if your interpreter has a different name: `make all PYTHON=python3`.
@@ -27,14 +27,12 @@ This runs three steps in order:
 2. `make analyze` fits both estimators, writing `results/raw/estimates.pk` and `results/summary.csv`.
 3. `make figures` writes the boxplots `results/figures/plugin_boxplot.png` and `results/figures/beta2_boxplot.png`.
 
-Other targets: `make test` runs the pytest suite, `make profile` runs the profiling, complexity and numerical-stability scripts in `profiling/` (writes to `results/profiling/`, needs `pip install line_profiler`, takes about 1–2 minutes), and `make clean` removes generated outputs.
-
-See [docs/BASELINE.md](docs/BASELINE.md) for baseline runtime, profiler results, computational complexity and numerical-stability findings.
-
-## Estimated runtime
-
-About 5 seconds for `make all` on a typical laptop (measured at roughly 2 s for simulate + analyze and 2 s for figures).
+Project 3 optimizes the simulation code and profiles its bottlenecks. The full profiling analysis can be run with `make all-with-profilers`.
 
 ## Key findings
 
 The raw logistic treatment coefficient systematically overestimates the true log-odds difference. Its bias is roughly +0.15 to +0.31 and does not vanish as n grows to 5000. Freedman's plug-in estimator is essentially unbiased, with bias under 0.01 at every n, and its standard deviation shrinks as n increases.
+
+## AI disclosure
+
+Made with the assistance of Claude Opus 5.5

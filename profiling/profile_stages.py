@@ -17,7 +17,7 @@ import pstats
 import matplotlib.pyplot as plt
 import numpy as np
 
-from _common import OUT
+from _common import OUT, done
 
 import analyze
 import simulation
@@ -28,7 +28,7 @@ STUDY_NS = [100, 500, 1000, 5000]
 # stage label -> (file suffix, function name) as cProfile records them
 STAGES = {
     "simulate: randomize": ("dgps.py", "randomize"),
-    "estimate: logit_mle": ("methods.py", "logit_mle"),
+    "estimate: logit_mle": ("methods.py", "logit_mle|logit_mle_batch"),
     "estimate: plug_in": ("methods.py", "plug_in"),
     "save/load: pickle": ("~", "<built-in method _pickle.dumps>|<built-in method _pickle.loads>"),
     "analyze: summarize": ("analyze.py", "summarize"),
@@ -69,8 +69,6 @@ def main():
         prof.runcall(pipeline, n, S)
         t = cumtimes(prof)
         rows.append(dict(n=n, S=S, **{k: v / S for k, v in t.items()}))
-        print(f"n={n:>6} S={S:>4} " + "  ".join(
-            f"{k.split(': ')[-1]}={1e3 * v / S:.4f}ms" for k, v in t.items()))
 
     labels = list(STAGES) + ["total"]
     with open(OUT / "stage_scaling.csv", "w") as f:
@@ -94,7 +92,6 @@ def main():
         fit_lines.append(f"{l:22s} {s_lo:8.2f} {s_hi:8.2f}")
     text = "\n".join(fit_lines)
     (OUT / "stage_scaling_fit.txt").write_text(text + "\n")
-    print(text)
 
     fig, ax = plt.subplots(figsize=(7.5, 5.2))
     styles = ["C0s-", "C2v-", "C1^-", "C4D-", "C3P-", "ko-"]
@@ -114,7 +111,7 @@ def main():
     ax.legend(fontsize=7.5, loc="upper left")
     fig.tight_layout()
     fig.savefig(OUT / "stage_scaling.png", dpi=150)
-    print(f"Saved {OUT / 'stage_scaling.png'}")
+    done(__file__)
 
 
 if __name__ == "__main__":

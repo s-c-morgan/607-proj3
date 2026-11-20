@@ -4,9 +4,11 @@ Part A re-runs the exact study (seed 607, n = 100/500/1000/5000, 1000 sims)
 with every numpy floating-point event counted (np.errstate(all="call")),
 Python warnings recorded, and exceptions caught. Each fit's status code from
 logit_mle(full_output=True) is recorded. For converged fits we also replay the
-Newton-Raphson loop (identical arithmetic to methods.logit_mle) to log the
-final gradient norm, Hessian condition number and fitted-probability range,
-and check the replay reproduces logit_mle exactly.
+Newton-Raphson loop (same algorithm as methods.logit_mle, written per fit) to
+log the final gradient norm, Hessian condition number and fitted-probability
+range, and check the replay reproduces logit_mle's beta and iteration count.
+The replay sums in a different order from the batched code, so beta agrees
+to rounding (rtol 1e-10) rather than bit for bit.
 
 Part B stresses the same code outside the study's settings (smaller n) to find
 the conditions under which it does break down.
@@ -19,7 +21,7 @@ from collections import Counter
 
 import numpy as np
 
-from _common import OUT
+from _common import OUT, done
 
 from dgps import make_population, randomize
 from methods import (CONVERGED, STATUS, _expit, _expit_and_weight, logit_mle,
@@ -38,7 +40,7 @@ np.seterrcall(_fp_handler)
 
 
 def newton_trace(X, Y, Z):
-    """Replays methods.logit_mle on a fit known to converge (same arithmetic)."""
+    """Replays methods.logit_mle on a fit known to converge (same algorithm)."""
     M = np.column_stack([np.ones(len(Y)), X, Z])
     beta = np.zeros(3)
     conds = []
@@ -82,9 +84,11 @@ def one_rep(X, Y, Z):
         if out["converged"]:
             with np.errstate(all="ignore"):
                 b2, diag = newton_trace(X, Y, Z)
-            diag.pop("iters"), diag.pop("converged")
+            replay_iters = diag.pop("iters")
+            diag.pop("converged")
             out.update(diag)
-            out["replay_matches"] = bool(np.array_equal(b2, out["beta"]))
+            out["replay_matches"] = bool(np.allclose(b2, out["beta"], rtol=1e-10, atol=0)
+                                         and replay_iters == out["iters"])
     return out
 
 
@@ -186,4 +190,4 @@ if __name__ == "__main__":
 
     text = "\n".join(log)
     (OUT / "stability_log.txt").write_text(text + "\n")
-    print(text)
+    done(__file__)

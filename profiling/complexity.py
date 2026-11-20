@@ -12,7 +12,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from _common import OUT
+from _common import OUT, done
 
 from dgps import make_population, randomize
 from methods import logit_mle, plug_in
@@ -93,8 +93,6 @@ if __name__ == "__main__":
         report.append(f"  n={n:5d}: {1000 * t:.3f} s ({100 * 1000 * t / pred:.0f}%)")
     text = "\n".join(report)
     (OUT / "complexity_fit.txt").write_text(text + "\n")
-    print(open(OUT / "complexity.csv").read())
-    print(text)
 
     # Plot
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -117,4 +115,4 @@ if __name__ == "__main__":
     ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(OUT / "complexity.png", dpi=150)
-    print(f"Saved {OUT / 'complexity.png'}")
+    done(__file__)

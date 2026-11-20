@@ -118,18 +118,22 @@ def test_separation_through_z_is_not_reported_as_converged():
 
 
 def test_false_convergence_at_boundary_is_flagged():
-    # Real n = 8 experiment from the stress test (seed 2026). Separation is
-    # through X and Z jointly; Newton's step only drops below tol once every
-    # residual has underflowed, with |eta| ~ 400 and fitted p exactly 0 or 1.
-    X = np.array([0, 1, 1, 1, 1, 1, 0, 1])
-    Y = np.array([0, 0, 1, 1, 1, 1, 1, 1])
-    Z = np.array([0.06258281427537526, 0.10755052355637007, 0.9865725093907286,
-                  0.5656915959234635, 0.3722358405584839, 0.9417028137160622,
-                  0.9098357053421351, 0.8826982268239402])
+    # Real n = 12 experiment from the stress test (seed 2026). Separation is
+    # through X and Z jointly; Newton's step drops below tol at iteration 12
+    # only because every residual has underflowed, with fitted p exactly 0 or
+    # 1. (Chosen because the path is well conditioned: some n = 8 cases reach
+    # Hessian condition numbers ~1e16, and their failure label then depends
+    # on rounding.)
+    X = np.array([1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1])
+    Y = np.array([1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1])
+    Z = np.array([0.23945055502757184, 0.7420916336848787, 0.35325680620445443,
+                  0.6944599012936342, 0.3982310889166055, 0.876262662460279,
+                  0.7080599070911773, 0.08987604900799306, 0.7609189948878938,
+                  0.2928378438147393, 0.20014812715635588, 0.5732693808223385])
     assert not separated_by_treatment(X, Y)
     with np.errstate(all="ignore"):
-        beta, info = logit_mle(X, Y, Z, max_iter=200, full_output=True)
-    assert info["status"] == FITTED_BOUNDARY
+        beta, info = logit_mle(X, Y, Z, full_output=True)
+    assert info["status"] == FITTED_BOUNDARY and info["n_iter"] == 12
     assert np.all(np.isnan(beta))
 
 

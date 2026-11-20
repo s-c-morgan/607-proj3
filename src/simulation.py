@@ -12,15 +12,20 @@ experiment. Saved to results/raw/estimates.pk as a numpy array with columns
     true delta, fit status, Newton iterations
 Fit status is a methods.STATUS code (0 = converged). Failed fits have NaN
 betas and plug-in estimate and are excluded by analyze.py.
+
+`python simulation.py --workers K` runs step 2 across K threads
+(estimate_parallel); the output is the same as the serial run.
 """
+import argparse
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
 from dgps import make_population, randomize
 from metrics import true_delta
-from methods import logit_mle, plug_in
+from methods import logit_mle_batch, plug_in
 
 SAMPLE_SIZES = [100, 500, 1000, 5000]
 N_SIMS = 1000
@@ -36,22 +41,54 @@ def simulate_data(sample_sizes=SAMPLE_SIZES, n_sims=N_SIMS, seed=SEED):
     for n in sample_sizes:
         Z, YC, YT = make_population(n, rng)
         X = np.empty((n_sims, n), dtype=int)
-        Y = np.empty((n_sims, n), dtype=int)
         for s in range(n_sims):
-            X[s], Y[s], _ = randomize(Z, YC, YT, frac_treated=0.75, rng=rng)
+            X[s], _, _ = randomize(Z, YC, YT, frac_treated=0.75, rng=rng)
+        Y = np.where(X == 1, YT, YC)
         data[n] = dict(Z=Z, YC=YC, YT=YT, delta=true_delta(YC, YT), X=X, Y=Y)
     return data
 
 
 def estimate(data):
-    rows = []
+    """All experiments for a given n are fitted in one batched call."""
+    return np.vstack([_estimate_block(n, 0, d["X"], d["Y"], d["Z"], d["delta"])
+                      for n, d in data.items()])
+
+
+def estimate_parallel(data, workers=4):
+    """Same output as ``estimate``, with the work split across threads.
+
+    Each n is cut into blocks of replications holding about the same number
+    of (replication, subject) elements, so n = 5000 (three quarters of the
+    work) is spread over several threads. NumPy releases the GIL inside its
+    array arithmetic, so the blocks run concurrently. Blocks come back in
+    order, so rows are ordered by n and then simulation number, as in
+    ``estimate``.
+
+    Threads rather than processes: starting a process pool on macOS (spawn)
+    costs ~0.8 s, more than the whole serial estimate, and fork-based pools
+    crash under Apple's Accelerate BLAS. See docs/OPTIMIZATION.md.
+    """
+    total = sum(d["X"].size for d in data.values())
+    per_task = max(1, total // (2 * workers))
+    tasks = []
     for n, d in data.items():
-        for s in range(d["X"].shape[0]):
-            beta, info = logit_mle(d["X"][s], d["Y"][s], d["Z"], full_output=True)
-            delta_tilde, _, _ = plug_in(beta, d["Z"])
-            rows.append([n, s + 1, *beta, delta_tilde, d["delta"],
-                         info["status"], info["n_iter"]])
-    return np.array(rows)
+        rows = max(1, per_task // n)
+        for lo in range(0, d["X"].shape[0], rows):
+            tasks.append((n, lo, d["X"][lo:lo + rows], d["Y"][lo:lo + rows],
+                          d["Z"], d["delta"]))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        blocks = list(pool.map(_estimate_block, *zip(*tasks)))
+    return np.vstack(blocks)
+
+
+def _estimate_block(n, first_sim, X, Y, Z, delta):
+    """Estimates for experiments first_sim+1, ..., first_sim+len(X) of one n."""
+    S = X.shape[0]
+    beta, info = logit_mle_batch(X, Y, Z)
+    delta_tilde, _, _ = plug_in(beta, Z)
+    return np.column_stack([
+        np.full(S, n), np.arange(first_sim + 1, first_sim + S + 1), beta, delta_tilde,
+        np.full(S, delta), info["status"], info["n_iter"]]).astype(float)
 
 
 def _save(obj, path):
@@ -61,11 +98,17 @@ def _save(obj, path):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--workers", type=int, default=0,
+                    help="estimate in parallel with this many threads (0 = serial)")
+    args = ap.parse_args()
+
     data = simulate_data()
     _save(data, DATA_PATH)
     print(f"Saved simulated data for n={list(data)} to {DATA_PATH}")
 
     with open(DATA_PATH, "rb") as f:
-        results = estimate(pickle.load(f))
+        data = pickle.load(f)
+    results = estimate_parallel(data, args.workers) if args.workers else estimate(data)
     _save(results, RESULTS_PATH)
     print(f"Saved {results.shape[0]} rows to {RESULTS_PATH}")
